@@ -1,6 +1,6 @@
-# <img src="bootkeeper.png" width="48" height="48" alt=""> Bootkeeper
+# <img src="vigilant.png" width="48" height="48" alt=""> Vigilant
 
-Bootkeeper helps you see and manage what starts with your Omarchy desktop or when your system boots.
+Vigilant helps you see and manage what starts with your Omarchy desktop or when your system boots.
 
 ## What it does
 
@@ -12,13 +12,13 @@ Bootkeeper helps you see and manage what starts with your Omarchy desktop or whe
 
 ## Install
 
-Download the latest Arch package from [Releases](https://github.com/seth-reee/bootkeeper/releases), then install it from your Downloads folder:
+Download the latest Arch package from [Releases](https://github.com/seth-reee/vigilant/releases), then install it from your Downloads folder:
 
 ```bash
-sudo pacman -U ./bootkeeper-*.pkg.tar.zst
+sudo pacman -U ./vigilant-*.pkg.tar.zst
 ```
 
-Open **Bootkeeper** from the application menu.
+Open **Vigilant** from the application menu.
 
 ## Use
 
@@ -26,4 +26,4 @@ Choose **Save backup** before changing startup entries. Select an entry to enabl
 
 ## License
 
-Bootkeeper is made by [seth-reee](https://github.com/seth-reee) and is available under the [MIT License](LICENSE).
+Vigilant is made by [seth-reee](https://github.com/seth-reee) and is available under the [MIT License](LICENSE).

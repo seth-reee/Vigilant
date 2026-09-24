@@ -1,16 +1,18 @@
-pkgname=bootkeeper
-pkgver=0.1.0
+pkgname=vigilant
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='Qt startup entry manager for Omarchy'
 arch=('x86_64')
-url='https://github.com/seth-reee/bootkeeper'
+url='https://github.com/seth-reee/vigilant'
 license=('MIT')
+conflicts=('bootkeeper')
+replaces=('bootkeeper')
 depends=('qt6-base' 'systemd' 'polkit' 'gcc-libs' 'glibc')
 optdepends=('qt6-wayland: native Wayland support' 'omarchy: theme and default editor integration')
 makedepends=('cmake' 'ninja' 'gcc')
 options=('!debug')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('c5aa74f6fc0070b6ef04f2ed38ce4761977bfa85ea15c863dcbc8b5deeca0ff1')
+sha256sums=('SKIP')
 
 build() {
   cmake -S "$srcdir/$pkgname-$pkgver" -B build -G Ninja \

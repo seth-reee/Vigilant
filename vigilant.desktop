@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Bootkeeper
+Name=Vigilant
 Comment=Manage startup apps and systemd services
-Exec=bootkeeper
-Icon=bootkeeper
+Exec=vigilant
+Icon=vigilant
 Terminal=false
 Categories=System;Settings;
 Keywords=startup;autostart;systemd;boot;

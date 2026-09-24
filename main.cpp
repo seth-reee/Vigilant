@@ -311,14 +311,14 @@ void applyTheme(QApplication &app) {
 class MainWindow : public QMainWindow {
 public:
     MainWindow() {
-        setWindowTitle("Bootkeeper");
+        setWindowTitle("Vigilant");
         resize(1040, 650);
         auto *central = new QWidget;
         auto *layout = new QVBoxLayout(central);
         layout->setContentsMargins(20, 20, 20, 12);
         layout->setSpacing(12);
 
-        auto *title = new QLabel("Bootkeeper");
+        auto *title = new QLabel("Vigilant");
         QFont titleFont = title->font();
         titleFont.setPointSize(18);
         titleFont.setBold(true);
@@ -326,7 +326,7 @@ public:
         auto *titleRow = new QHBoxLayout;
         auto *about = new QPushButton("About");
         auto *titleIcon = new QLabel;
-        titleIcon->setPixmap(QPixmap(":/bootkeeper.png").scaled(42, 42, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        titleIcon->setPixmap(QPixmap(":/vigilant.png").scaled(42, 42, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         titleRow->addWidget(titleIcon);
         titleRow->addWidget(title);
         titleRow->addStretch();
@@ -404,16 +404,16 @@ public:
 private:
     void showAbout() {
         QDialog dialog(this);
-        dialog.setWindowTitle("About Bootkeeper");
+        dialog.setWindowTitle("About Vigilant");
         dialog.resize(580, 440);
         auto *layout = new QVBoxLayout(&dialog);
         layout->setContentsMargins(20, 20, 20, 20);
         layout->setSpacing(10);
 
         auto *aboutIcon = new QLabel;
-        aboutIcon->setPixmap(QPixmap(":/bootkeeper.png").scaled(72, 72, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        aboutIcon->setPixmap(QPixmap(":/vigilant.png").scaled(72, 72, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         layout->addWidget(aboutIcon);
-        auto *heading = new QLabel("Bootkeeper " + qApp->applicationVersion());
+        auto *heading = new QLabel("Vigilant " + qApp->applicationVersion());
         QFont font = heading->font();
         font.setPointSize(17);
         font.setBold(true);
@@ -538,12 +538,12 @@ private:
     }
 
     void saveBackup() {
-        const QString suggested = QDir::homePath() + "/bootkeeper-" +
+        const QString suggested = QDir::homePath() + "/vigilant-" +
             QDateTime::currentDateTime().toString("yyyyMMdd-hhmmss") + ".json";
         const QString path = QFileDialog::getSaveFileName(this, "Save startup backup", suggested, "JSON (*.json)");
         if (path.isEmpty()) return;
         QJsonObject root;
-        root["format"] = "bootkeeper-1";
+        root["format"] = "vigilant-1";
         root["created"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
         QJsonArray files;
         const auto userFiles = desktopFiles(autostartDir());
@@ -597,11 +597,12 @@ private:
         QJsonParseError parseError;
         const QJsonDocument document = QJsonDocument::fromJson(bytes, &parseError);
         const QJsonObject root = document.object();
-        if (!document.isObject() || root.value("format").toString() != "bootkeeper-1" ||
+        const QString format = root.value("format").toString();
+        if (!document.isObject() || (format != "vigilant-1" && format != "bootkeeper-1") ||
             !root.value("userDesktopFiles").isArray() || !root.value("userUnitFiles").isArray() ||
             !root.value("globalDesktopNames").isArray() ||
             !root.value("units").isArray()) {
-            QMessageBox::warning(this, "Load failed", "This is not a Bootkeeper backup.");
+            QMessageBox::warning(this, "Load failed", "This is not a Vigilant backup.");
             return;
         }
         QMap<QString, QByteArray> files;
@@ -697,9 +698,9 @@ private:
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
-    app.setApplicationName("Bootkeeper");
-    app.setApplicationVersion("0.1.0");
-    app.setWindowIcon(QIcon(":/bootkeeper.png"));
+    app.setApplicationName("Vigilant");
+    app.setApplicationVersion("0.2.0");
+    app.setWindowIcon(QIcon(":/vigilant.png"));
     app.setStyle("Fusion");
     applyTheme(app);
     MainWindow window;
