@@ -1,0 +1,29 @@
+# <img src="bootkeeper.png" width="48" height="48" alt=""> Bootkeeper
+
+Bootkeeper helps you see and manage what starts with your Omarchy desktop or when your system boots.
+
+## What it does
+
+- Shows desktop startup apps and systemd services and timers.
+- Lets you enable, disable, or delete entries you manage.
+- Saves a backup and restores it if you need to undo changes.
+- Opens an entry's file in your default Omarchy editor from the right-click menu.
+- Follows your current Omarchy theme.
+
+## Install
+
+Download the latest Arch package from [Releases](https://github.com/seth-reee/bootkeeper/releases), then install it from your Downloads folder:
+
+```bash
+sudo pacman -U ./bootkeeper-*.pkg.tar.zst
+```
+
+Open **Bootkeeper** from the application menu.
+
+## Use
+
+Choose **Save backup** before changing startup entries. Select an entry to enable or disable it. **Delete** is available for files in your user account. Choose **Load backup** to restore a saved list. System service changes may ask for your password and take effect at the next boot; desktop startup changes take effect at the next login.
+
+## License
+
+Bootkeeper is made by [seth-reee](https://github.com/seth-reee) and is available under the [MIT License](LICENSE).

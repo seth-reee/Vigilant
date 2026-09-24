@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Bootkeeper
+Comment=Manage startup apps and systemd services
+Exec=bootkeeper
+Icon=bootkeeper
+Terminal=false
+Categories=System;Settings;
+Keywords=startup;autostart;systemd;boot;
+StartupNotify=true
