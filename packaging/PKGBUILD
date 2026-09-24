@@ -12,7 +12,7 @@ optdepends=('qt6-wayland: native Wayland support' 'omarchy: theme and default ed
 makedepends=('cmake' 'ninja' 'gcc')
 options=('!debug')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('286fd0d7b09e981d906fae17a7f495e7786964b90e3ff476f5f4b9825d6607e2')
 
 build() {
   cmake -S "$srcdir/$pkgname-$pkgver" -B build -G Ninja \
