@@ -1,8 +1,8 @@
 pkgname=vigilant
 pkgver=0.2.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Qt startup entry manager for Omarchy'
-arch=('x86_64')
+arch=('x86_64' 'aarch64')
 url='https://github.com/seth-reee/vigilant'
 license=('MIT')
 conflicts=('bootkeeper')
@@ -12,10 +12,10 @@ optdepends=('qt6-wayland: native Wayland support' 'omarchy: theme and default ed
 makedepends=('cmake' 'ninja' 'gcc')
 options=('!debug')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('286fd0d7b09e981d906fae17a7f495e7786964b90e3ff476f5f4b9825d6607e2')
+sha256sums=('f0b28eda56ca8a08009d9e25b405da9e72ec34d4d34df6ea118568621fa7ecb2')
 
 build() {
-  cmake -S "$srcdir/$pkgname-$pkgver" -B build -G Ninja \
+  cmake -S "$srcdir/Vigilant-$pkgver" -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
   cmake --build build
 }

@@ -12,11 +12,15 @@ Vigilant helps you see and manage what starts with your Omarchy desktop or when 
 
 ## Install
 
-Download the latest Arch package from [Releases](https://github.com/seth-reee/vigilant/releases), then install it from your Downloads folder:
+Download the latest Omarchy package from [Releases](https://github.com/seth-reee/vigilant/releases), then install it from your Downloads folder:
 
 ```bash
 sudo pacman -U ./vigilant-*.pkg.tar.zst
 ```
+
+The package recipe supports Omarchy on x86_64 and ARM64, using Arch Linux and Arch Linux ARM respectively. Install the package whose filename matches your machine's architecture. To build from the tagged release, install `base-devel`, `cmake`, `ninja`, and `qt6-base`, then run `makepkg -s` in `packaging/`.
+
+**ARM64 status:** The ARM64 package built and launched headlessly under QEMU, but remains untested on a real ARM64 Omarchy desktop.
 
 Open **Vigilant** from the application menu.
 
