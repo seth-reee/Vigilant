@@ -3,9 +3,11 @@
 #include <QDateTime>
 #include <QDialog>
 #include <QDir>
+#include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QHash>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -23,6 +25,8 @@
 #include <QPixmap>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSet>
+#include <QSignalBlocker>
 #include <QStatusBar>
 #include <QTableWidget>
 #include <QTextBrowser>
@@ -66,7 +70,9 @@ bool safeUnitName(const QString &name) {
     return pattern.match(name).hasMatch();
 }
 
-QString desktopValue(const QByteArray &bytes, const QString &key) {
+QHash<QString, QString> desktopValues(const QByteArray &bytes) {
+    static const QSet<QString> wanted{"Name", "Exec", "Hidden", "X-GNOME-Autostart-enabled"};
+    QHash<QString, QString> values;
     bool inGroup = false;
     for (const QByteArray &raw : bytes.split('\n')) {
         const QString line = QString::fromUtf8(raw).trimmed();
@@ -74,9 +80,15 @@ QString desktopValue(const QByteArray &bytes, const QString &key) {
             inGroup = line == "[Desktop Entry]";
             continue;
         }
-        if (inGroup && line.startsWith(key + '=')) return line.mid(key.size() + 1).trimmed();
+        if (!inGroup) continue;
+        const int equals = line.indexOf('=');
+        if (equals > 0) {
+            const QString key = line.left(equals);
+            if (wanted.contains(key) && !values.contains(key))
+                values.insert(key, line.mid(equals + 1).trimmed());
+        }
     }
-    return {};
+    return values;
 }
 
 bool writeFile(const QString &path, const QByteArray &data, QString *error) {
@@ -203,11 +215,12 @@ QList<Entry> scanDesktop() {
         entry.key = name;
         entry.path = path;
         entry.globalPath = global.value(name);
-        entry.name = desktopValue(bytes, "Name");
+        const auto values = desktopValues(bytes);
+        entry.name = values.value("Name");
         if (entry.name.isEmpty()) entry.name = name;
-        entry.detail = desktopValue(bytes, "Exec");
-        entry.enabled = desktopValue(bytes, "Hidden").compare("true", Qt::CaseInsensitive) != 0 &&
-                        desktopValue(bytes, "X-GNOME-Autostart-enabled").compare("false", Qt::CaseInsensitive) != 0;
+        entry.detail = values.value("Exec");
+        entry.enabled = values.value("Hidden").compare("true", Qt::CaseInsensitive) != 0 &&
+                        values.value("X-GNOME-Autostart-enabled").compare("false", Qt::CaseInsensitive) != 0;
         entry.state = entry.enabled ? "Enabled" : "Disabled";
         entry.source = user.contains(name) ? (global.contains(name) ? "User override" : "User app") : "System app";
         entry.deletable = user.contains(name);
@@ -218,33 +231,32 @@ QList<Entry> scanDesktop() {
 
 QList<Entry> scanUnits(bool user) {
     QList<Entry> entries;
-    for (const QString &type : {"service", "timer"}) {
-        QProcess process;
-        QStringList args;
-        if (user) args << "--user";
-        args << "list-unit-files" << "--type=" + type << "--no-legend" << "--no-pager";
-        process.start("/usr/bin/systemctl", args);
-        if (!process.waitForFinished(10000) || process.exitCode() != 0) continue;
-        const QString output = QString::fromUtf8(process.readAllStandardOutput());
-        for (const QString &line : output.split('\n', Qt::SkipEmptyParts)) {
-            const QStringList columns = line.trimmed().split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-            if (columns.size() < 2 || !safeUnitName(columns[0])) continue;
-            const QString state = columns[1];
-            if (state != "enabled" && state != "enabled-runtime" && state != "disabled") continue;
-            Entry entry;
-            entry.kind = user ? Kind::UserUnit : Kind::SystemUnit;
-            entry.key = columns[0];
-            entry.name = entry.key;
-            entry.source = user ? "User systemd" : "System systemd";
-            entry.detail = type == "timer" ? "Timer" : "Service";
-            entry.state = state;
-            entry.enabled = state.startsWith("enabled");
-            const QString localPath = userUnitDir() + '/' + entry.key;
-            const QFileInfo info(localPath);
-            if (user && info.exists()) entry.path = localPath;
-            entry.deletable = user && info.isFile() && !info.isSymLink();
-            entries.append(entry);
-        }
+    QProcess process;
+    QStringList args;
+    if (user) args << "--user";
+    args << "list-unit-files" << "--type=service,timer" << "--no-legend" << "--no-pager";
+    process.start("/usr/bin/systemctl", args);
+    if (!process.waitForFinished(10000) || process.exitCode() != 0) return entries;
+    static const QRegularExpression whitespace("\\s+");
+    const QString output = QString::fromUtf8(process.readAllStandardOutput());
+    for (const QString &line : output.split('\n', Qt::SkipEmptyParts)) {
+        const QStringList columns = line.trimmed().split(whitespace, Qt::SkipEmptyParts);
+        if (columns.size() < 2 || !safeUnitName(columns[0])) continue;
+        const QString state = columns[1];
+        if (state != "enabled" && state != "enabled-runtime" && state != "disabled") continue;
+        Entry entry;
+        entry.kind = user ? Kind::UserUnit : Kind::SystemUnit;
+        entry.key = columns[0];
+        entry.name = entry.key;
+        entry.source = user ? "User systemd" : "System systemd";
+        entry.detail = entry.key.endsWith(".timer") ? "Timer" : "Service";
+        entry.state = state;
+        entry.enabled = state.startsWith("enabled");
+        const QString localPath = userUnitDir() + '/' + entry.key;
+        const QFileInfo info(localPath);
+        if (user && info.exists()) entry.path = localPath;
+        entry.deletable = user && info.isFile() && !info.isSymLink();
+        entries.append(entry);
     }
     return entries;
 }
@@ -266,12 +278,15 @@ QString sourcePath(const Entry &entry, QString *error) {
     return path;
 }
 
-QMap<QString, QColor> themeColors() {
-    QMap<QString, QColor> colors;
+QByteArray themeData() {
     QFile file(QDir::homePath() + "/.local/state/omarchy/current/theme/colors.toml");
-    if (!file.open(QIODevice::ReadOnly)) return colors;
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+QMap<QString, QColor> themeColors(const QByteArray &data) {
+    QMap<QString, QColor> colors;
     static const QRegularExpression line("^\\s*([a-z_]+)\\s*=\\s*\"(#[0-9A-Fa-f]{6})\"");
-    for (const QString &text : QString::fromUtf8(file.readAll()).split('\n')) {
+    for (const QString &text : QString::fromUtf8(data).split('\n')) {
         auto match = line.match(text);
         if (match.hasMatch()) colors.insert(match.captured(1), QColor(match.captured(2)));
     }
@@ -279,7 +294,13 @@ QMap<QString, QColor> themeColors() {
 }
 
 void applyTheme(QApplication &app) {
-    const auto colors = themeColors();
+    static QByteArray lastData;
+    static bool applied = false;
+    const QByteArray data = themeData();
+    if (applied && data == lastData) return;
+    lastData = data;
+    applied = true;
+    const auto colors = themeColors(data);
     auto pick = [&](const QString &key, const char *fallback) { return colors.value(key, QColor(fallback)); };
     const QColor bg = pick("background", "#121212");
     const QColor panel = pick("lighter_background", "#1e1e1e");
@@ -297,6 +318,8 @@ void applyTheme(QApplication &app) {
     palette.setColor(QPalette::Highlight, selection);
     palette.setColor(QPalette::HighlightedText, fg);
     palette.setColor(QPalette::PlaceholderText, pick("light_foreground", "#8a8a8d"));
+    palette.setColor(QPalette::Link, accent);
+    palette.setColor(QPalette::LinkVisited, accent);
     app.setPalette(palette);
     app.setStyleSheet(QString("QWidget { font-size: 13px; } "
                               "QPushButton, QLineEdit, QComboBox { padding: 7px 10px; border: 1px solid %1; border-radius: 6px; } "
@@ -307,6 +330,29 @@ void applyTheme(QApplication &app) {
                           .arg(pick("muted", "#333333").name(), accent.name(),
                                pick("dark_foreground", "#555555").name(), panel.name(), selection.name()));
 }
+
+class ThemeLinkLabel : public QLabel {
+public:
+    ThemeLinkLabel() {
+        setOpenExternalLinks(true);
+        updateLink();
+    }
+
+protected:
+    void changeEvent(QEvent *event) override {
+        QLabel::changeEvent(event);
+        if (event->type() == QEvent::PaletteChange ||
+            event->type() == QEvent::ApplicationPaletteChange)
+            updateLink();
+    }
+
+private:
+    void updateLink() {
+        setText(QString("Created by seth-reee · <a href=\"https://github.com/seth-reee\" "
+                        "style=\"color: %1;\">GitHub profile</a>")
+                    .arg(palette().color(QPalette::Link).name()));
+    }
+};
 
 class MainWindow : public QMainWindow {
 public:
@@ -421,9 +467,7 @@ private:
         layout->addWidget(heading);
         layout->addWidget(new QLabel("A startup entry manager for Omarchy."));
 
-        auto *github = new QLabel("Created by seth-reee · <a href=\"https://github.com/seth-reee\">GitHub profile</a>");
-        github->setOpenExternalLinks(true);
-        layout->addWidget(github);
+        layout->addWidget(new ThemeLinkLabel);
         layout->addWidget(new QLabel("MIT License · Copyright © 2026 seth-reee"));
 
         QFile license(":/LICENSE");
@@ -452,19 +496,29 @@ private:
     }
 
     void populate() {
-        table_->setRowCount(0);
         const QString query = search_->text().trimmed();
+        const int source = source_->currentIndex();
+        QVector<int> visible;
+        visible.reserve(entries_.size());
         for (int i = 0; i < entries_.size(); ++i) {
             const Entry &e = entries_[i];
-            const int source = source_->currentIndex();
             if ((source == 1 && e.kind != Kind::Desktop) ||
                 (source == 2 && e.kind != Kind::UserUnit) ||
                 (source == 3 && e.kind != Kind::SystemUnit)) continue;
             if (!query.isEmpty() && !e.name.contains(query, Qt::CaseInsensitive) &&
                 !e.key.contains(query, Qt::CaseInsensitive) &&
                 !e.detail.contains(query, Qt::CaseInsensitive)) continue;
-            const int row = table_->rowCount();
-            table_->insertRow(row);
+            visible.append(i);
+        }
+        table_->setUpdatesEnabled(false);
+        QSignalBlocker blocker(table_);
+        table_->clearSelection();
+        table_->setCurrentCell(-1, -1);
+        table_->clearContents();
+        table_->setRowCount(visible.size());
+        for (int row = 0; row < visible.size(); ++row) {
+            const int i = visible[row];
+            const Entry &e = entries_[i];
             const QStringList cells = {e.name, e.source, e.state, e.detail};
             for (int col = 0; col < cells.size(); ++col) {
                 auto *item = new QTableWidgetItem(cells[col]);
@@ -473,6 +527,7 @@ private:
                 table_->setItem(row, col, item);
             }
         }
+        table_->setUpdatesEnabled(true);
         updateButtons();
     }
 
@@ -699,7 +754,7 @@ private:
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName("Vigilant");
-    app.setApplicationVersion("0.2.0");
+    app.setApplicationVersion("0.2.1");
     app.setWindowIcon(QIcon(":/vigilant.png"));
     app.setStyle("Fusion");
     applyTheme(app);

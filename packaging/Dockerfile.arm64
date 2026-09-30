@@ -1,0 +1,7 @@
+FROM --platform=linux/arm64 lfdevs/archlinuxarm:base-devel
+
+# The base image's old Bash crashes under host QEMU. Run pacman directly
+# before invoking any shell, so Bash and readline get upgraded first.
+RUN ["/usr/bin/pacman", "-Syu", "--noconfirm", "--needed", "base-devel", "cmake", "ninja", "qt6-base", "polkit", "libarchive", "pkgconf"]
+RUN ["/usr/bin/bash", "-euc", "useradd -u 1000 -m builder; printf \"\\nPKGEXT='.pkg.tar.zst'\\n\" >> /etc/makepkg.conf"]
+CMD ["/usr/bin/bash"]
