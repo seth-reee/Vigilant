@@ -9,6 +9,7 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 qt_add_executable(vigilant main.cpp)
 qt_add_resources(vigilant "license" PREFIX "/" FILES LICENSE)
 qt_add_resources(vigilant "icon" PREFIX "/" FILES vigilant.png)
+target_compile_definitions(vigilant PRIVATE VIGILANT_VERSION="${PROJECT_VERSION}")
 target_link_libraries(vigilant PRIVATE Qt6::Widgets)
 
 install(TARGETS vigilant RUNTIME DESTINATION bin)

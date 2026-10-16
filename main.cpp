@@ -754,7 +754,7 @@ private:
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName("Vigilant");
-    app.setApplicationVersion("0.2.1");
+    app.setApplicationVersion(VIGILANT_VERSION);
     app.setWindowIcon(QIcon(":/vigilant.png"));
     app.setStyle("Fusion");
     applyTheme(app);
