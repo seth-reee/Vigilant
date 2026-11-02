@@ -20,6 +20,10 @@ build() {
   cmake --build "build-$pkgver"
 }
 
+check() {
+  ctest --test-dir "build-$pkgver" --output-on-failure
+}
+
 package() {
   DESTDIR="$pkgdir" cmake --install "build-$pkgver"
 }

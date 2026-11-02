@@ -1,3 +1,6 @@
+#include "platform.h"
+#include <QDesktopServices>
+#include <QUrl>
 #include <QApplication>
 #include <QComboBox>
 #include <QDateTime>
@@ -50,6 +53,7 @@ struct Entry {
     QString state;
     bool enabled = false;
     bool deletable = false;
+    bool managed = false;
 };
 
 QString configHome() {
@@ -92,6 +96,7 @@ QHash<QString, QString> desktopValues(const QByteArray &bytes) {
 }
 
 bool writeFile(const QString &path, const QByteArray &data, QString *error) {
+    if (nixManagedPath(path)) { *error = managedEntryMessage(); return false; }
     if (!QDir().mkpath(QFileInfo(path).absolutePath())) {
         *error = "Could not create the destination directory.";
         return false;
@@ -104,6 +109,18 @@ bool writeFile(const QString &path, const QByteArray &data, QString *error) {
     return true;
 }
 
+bool removeStartupFile(const QString &path, QString *error) {
+    if (nixManagedPath(path)) { *error = managedEntryMessage(); return false; }
+    if (QFile::remove(path)) return true;
+    *error = "Could not remove " + path;
+    return false;
+}
+
+bool managedEntry(const Entry &entry, HostSystem system = hostSystem()) {
+    return entry.managed || nixManagedPath(entry.path) ||
+           (system == HostSystem::NixOS && entry.kind == Kind::SystemUnit);
+}
+
 bool readFile(const QString &path, QByteArray *data, QString *error) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -114,7 +131,20 @@ bool readFile(const QString &path, QByteArray *data, QString *error) {
     return true;
 }
 
+bool restoreStartupFile(const QList<Entry> &entries, Kind kind, const QString &name,
+                        const QByteArray &data, QString *error) {
+    for (const auto &entry : entries) {
+        if (entry.kind == kind && entry.key == name && managedEntry(entry)) {
+            *error = name + ": " + managedEntryMessage();
+            return false;
+        }
+    }
+    const QString path = (kind == Kind::Desktop ? autostartDir() : userUnitDir()) + '/' + name;
+    return writeFile(path, data, error);
+}
+
 bool setDesktopHidden(const Entry &entry, bool hidden, QString *error) {
+    if (managedEntry(entry)) { *error = managedEntryMessage(); return false; }
     const QString target = autostartDir() + '/' + entry.key;
     QByteArray bytes;
     if (QFileInfo::exists(target)) {
@@ -154,6 +184,7 @@ bool setDesktopHidden(const Entry &entry, bool hidden, QString *error) {
 }
 
 bool runProcess(const QString &program, const QStringList &args, QString *error) {
+    if (program.isEmpty()) { *error = "The required system command is not installed."; return false; }
     QProcess process;
     process.start(program, args);
     if (!process.waitForStarted(5000)) {
@@ -175,11 +206,18 @@ bool runProcess(const QString &program, const QStringList &args, QString *error)
 }
 
 bool setUnitEnabled(const Entry &entry, bool enabled, QString *error) {
+    if (managedEntry(entry)) { *error = managedEntryMessage(); return false; }
     if (!safeUnitName(entry.key)) { *error = "Invalid unit name."; return false; }
     const QString command = enabled ? "enable" : "disable";
     if (entry.kind == Kind::UserUnit)
-        return runProcess("/usr/bin/systemctl", {"--user", command, "--", entry.key}, error);
-    return runProcess("/usr/bin/pkexec", {"/usr/bin/systemctl", command, "--", entry.key}, error);
+        return runProcess(hostExecutable("systemctl"), {"--user", command, "--", entry.key}, error);
+    const QString systemctl = hostExecutable("systemctl");
+    const QString resolved = QFileInfo(systemctl).canonicalFilePath();
+    if (!resolved.startsWith("/usr/bin/") && !inNixStore(resolved)) {
+        *error = "Cannot find a system-installed systemctl for administrator actions.";
+        return false;
+    }
+    return runProcess(hostExecutable("pkexec"), {systemctl, command, "--", entry.key}, error);
 }
 
 QMap<QString, QString> desktopFiles(const QString &directory) {
@@ -223,7 +261,9 @@ QList<Entry> scanDesktop() {
                         values.value("X-GNOME-Autostart-enabled").compare("false", Qt::CaseInsensitive) != 0;
         entry.state = entry.enabled ? "Enabled" : "Disabled";
         entry.source = user.contains(name) ? (global.contains(name) ? "User override" : "User app") : "System app";
-        entry.deletable = user.contains(name);
+        entry.managed = nixManagedPath(entry.path);
+        entry.deletable = user.contains(name) && !entry.managed;
+        if (entry.managed) entry.source += " (Nix managed)";
         entries.append(entry);
     }
     return entries;
@@ -235,7 +275,7 @@ QList<Entry> scanUnits(bool user) {
     QStringList args;
     if (user) args << "--user";
     args << "list-unit-files" << "--type=service,timer" << "--no-legend" << "--no-pager";
-    process.start("/usr/bin/systemctl", args);
+    process.start(hostExecutable("systemctl"), args);
     if (!process.waitForFinished(10000) || process.exitCode() != 0) return entries;
     static const QRegularExpression whitespace("\\s+");
     const QString output = QString::fromUtf8(process.readAllStandardOutput());
@@ -243,7 +283,6 @@ QList<Entry> scanUnits(bool user) {
         const QStringList columns = line.trimmed().split(whitespace, Qt::SkipEmptyParts);
         if (columns.size() < 2 || !safeUnitName(columns[0])) continue;
         const QString state = columns[1];
-        if (state != "enabled" && state != "enabled-runtime" && state != "disabled") continue;
         Entry entry;
         entry.kind = user ? Kind::UserUnit : Kind::SystemUnit;
         entry.key = columns[0];
@@ -258,6 +297,44 @@ QList<Entry> scanUnits(bool user) {
         entry.deletable = user && info.isFile() && !info.isSymLink();
         entries.append(entry);
     }
+    QStringList inspect;
+    if (user) inspect << "--user";
+    inspect << "show" << "--property=Id,FragmentPath" << "--no-pager" << "--";
+    for (const auto &entry : entries) inspect << entry.key;
+    if (!entries.isEmpty()) {
+        QProcess details;
+        details.start(hostExecutable("systemctl"), inspect);
+        if (details.waitForFinished(10000) && details.exitCode() == 0) {
+            QHash<QString, QString> paths;
+            QString id, fragment;
+            const auto record = [&] { if (!id.isEmpty()) paths.insert(id, fragment); };
+            for (const auto &line : QString::fromUtf8(details.readAllStandardOutput()).split('\n')) {
+                if (line.isEmpty()) { record(); id.clear(); fragment.clear(); }
+                else if (line.startsWith("Id=")) id = line.mid(3);
+                else if (line.startsWith("FragmentPath=")) fragment = line.mid(13);
+            }
+            record();
+            for (auto &entry : entries) {
+                if (entry.path.isEmpty()) entry.path = paths.value(entry.key);
+                entry.managed = managedEntry(entry) || nixManagedPath(paths.value(entry.key)) ||
+                    (user && nixManagedPath("/etc/systemd/user/" + entry.key));
+                entry.deletable = entry.deletable && !entry.managed;
+                if (entry.managed) entry.source += " (Nix managed)";
+            }
+        }
+    }
+    // NixOS system units are declarative even if querying their source failed.
+    for (auto &entry : entries) {
+        entry.managed = managedEntry(entry) ||
+            (hostSystem() == HostSystem::NixOS && user && entry.path.isEmpty());
+        entry.deletable = entry.deletable && !entry.managed;
+        if (entry.managed && !entry.source.endsWith(" (Nix managed)")) entry.source += " (Nix managed)";
+    }
+    // Keep declarative static/masked units visible for inspection and restore protection.
+    entries.erase(std::remove_if(entries.begin(), entries.end(), [](const Entry &entry) {
+        return !entry.managed && entry.state != "enabled" && entry.state != "enabled-runtime" &&
+               entry.state != "disabled";
+    }), entries.end());
     return entries;
 }
 
@@ -267,7 +344,7 @@ QString sourcePath(const Entry &entry, QString *error) {
     if (entry.kind == Kind::UserUnit) args << "--user";
     args << "show" << "--property=FragmentPath" << "--value" << entry.key;
     QProcess process;
-    process.start("/usr/bin/systemctl", args);
+    process.start(hostExecutable("systemctl"), args);
     if (!process.waitForFinished(10000) || process.exitCode() != 0) {
         *error = QString::fromUtf8(process.readAllStandardError()).trimmed();
         if (error->isEmpty()) *error = "Could not locate the unit file.";
@@ -279,7 +356,8 @@ QString sourcePath(const Entry &entry, QString *error) {
 }
 
 QByteArray themeData() {
-    QFile file(QDir::homePath() + "/.local/state/omarchy/current/theme/colors.toml");
+    QFile file(qEnvironmentVariable("XDG_STATE_HOME", QDir::homePath() + "/.local/state") +
+               "/omarchy/current/theme/colors.toml");
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
@@ -492,7 +570,9 @@ private:
             return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
         });
         populate();
-        statusBar()->showMessage(QString::number(entries_.size()) + " entries found", 5000);
+        statusBar()->showMessage(hostExecutable("systemctl").isEmpty()
+            ? "systemctl is unavailable; showing desktop startup entries only."
+            : QString::number(entries_.size()) + " entries found", 5000);
     }
 
     void populate() {
@@ -523,7 +603,7 @@ private:
             for (int col = 0; col < cells.size(); ++col) {
                 auto *item = new QTableWidgetItem(cells[col]);
                 item->setData(Qt::UserRole, i);
-                item->setToolTip(e.path);
+                item->setToolTip(e.managed ? managedEntryMessage() + "\n" + e.path : e.path);
                 table_->setItem(row, col, item);
             }
         }
@@ -540,9 +620,14 @@ private:
 
     void updateButtons() {
         const Entry *entry = selected();
-        enable_->setEnabled(entry && !entry->enabled);
-        disable_->setEnabled(entry && entry->enabled);
-        remove_->setEnabled(entry && entry->deletable);
+        const bool editable = entry && !managedEntry(*entry);
+        enable_->setEnabled(editable && !entry->enabled);
+        disable_->setEnabled(editable && entry->enabled);
+        remove_->setEnabled(editable && entry->deletable);
+        const QString explanation = entry && !editable ? managedEntryMessage() : QString();
+        enable_->setToolTip(explanation);
+        disable_->setToolTip(explanation);
+        remove_->setToolTip(explanation);
     }
 
     void openSourceFile() {
@@ -555,8 +640,10 @@ private:
                                  error.isEmpty() ? "The source file is no longer available." : error);
             return;
         }
-        if (!QProcess::startDetached("omarchy", {"launch", "editor", path}))
-            QMessageBox::warning(this, "Cannot open file", "Could not launch the Omarchy default editor.");
+        const QString omarchy = QStandardPaths::findExecutable("omarchy");
+        if (!omarchy.isEmpty() && QProcess::startDetached(omarchy, {"launch", "editor", path})) return;
+        if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path)))
+            QMessageBox::warning(this, "Cannot open file", "Could not launch the default editor.");
     }
 
     void changeState(bool enabled) {
@@ -571,7 +658,7 @@ private:
 
     void deleteEntry() {
         const Entry *entry = selected();
-        if (!entry || !entry->deletable) return;
+        if (!entry || managedEntry(*entry) || !entry->deletable) return;
         const Entry copy = *entry;
         const QString explanation = copy.kind == Kind::Desktop && !copy.globalPath.isEmpty()
             ? "This deletes the user override. The system desktop entry will become visible again."
@@ -583,11 +670,11 @@ private:
             QMessageBox::warning(this, "Action failed", error);
             return;
         }
-        if (!QFile::remove(copy.path)) {
-            QMessageBox::warning(this, "Action failed", "Could not delete " + copy.path);
+        if (!removeStartupFile(copy.path, &error)) {
+            QMessageBox::warning(this, "Action failed", error);
             return;
         }
-        if (copy.kind == Kind::UserUnit && !runProcess("/usr/bin/systemctl", {"--user", "daemon-reload"}, &error))
+        if (copy.kind == Kind::UserUnit && !runProcess(hostExecutable("systemctl"), {"--user", "daemon-reload"}, &error))
             QMessageBox::warning(this, "Reload failed", error);
         refresh();
     }
@@ -603,6 +690,7 @@ private:
         QJsonArray files;
         const auto userFiles = desktopFiles(autostartDir());
         for (auto it = userFiles.begin(); it != userFiles.end(); ++it) {
+            if (nixManagedPath(it.value())) continue;
             QByteArray bytes;
             QString error;
             if (!readFile(it.value(), &bytes, &error)) {
@@ -617,7 +705,7 @@ private:
         for (const QString &name : unitDirectory.entryList({"*.service", "*.timer"}, QDir::Files | QDir::NoDotAndDotDot)) {
             if (!safeUnitName(name)) continue;
             const QFileInfo info(unitDirectory.filePath(name));
-            if (info.isSymLink()) continue;
+            if (info.isSymLink() || nixManagedPath(info.filePath())) continue;
             QByteArray bytes;
             QString error;
             if (!readFile(info.filePath(), &bytes, &error)) {
@@ -630,8 +718,8 @@ private:
         QJsonArray globalNames;
         QJsonArray units;
         for (const Entry &entry : entries_) {
-            if (entry.kind == Kind::Desktop && !entry.globalPath.isEmpty()) globalNames.append(entry.key);
-            if (entry.kind != Kind::Desktop)
+            if (!managedEntry(entry) && entry.kind == Kind::Desktop && !entry.globalPath.isEmpty()) globalNames.append(entry.key);
+            if (!managedEntry(entry) && entry.kind != Kind::Desktop)
                 units.append(QJsonObject{{"scope", entry.kind == Kind::UserUnit ? "user" : "system"},
                                          {"name", entry.key}, {"enabled", entry.enabled}});
         }
@@ -709,19 +797,20 @@ private:
             QString("Restore %1 desktop files, %2 user unit files, and %3 unit states? Existing matching files will be replaced. System unit changes may ask for authentication.")
                 .arg(files.size()).arg(userUnitFiles.size()).arg(units.size())) != QMessageBox::Yes) return;
 
+        refresh();
         QStringList failures;
         for (auto it = files.begin(); it != files.end(); ++it) {
-            if (!writeFile(autostartDir() + '/' + it.key(), it.value(), &error)) failures.append(error);
+            if (!restoreStartupFile(entries_, Kind::Desktop, it.key(), it.value(), &error)) failures.append(error);
         }
         for (const QString &name : globalNames) {
             const QString local = autostartDir() + '/' + name;
-            if (!files.contains(name) && QFileInfo::exists(local) && !QFile::remove(local))
-                failures.append("Could not remove " + local);
+            if (!files.contains(name) && (QFileInfo::exists(local) || QFileInfo(local).isSymLink()) &&
+                !removeStartupFile(local, &error)) failures.append(error);
         }
         for (auto it = userUnitFiles.begin(); it != userUnitFiles.end(); ++it) {
-            if (!writeFile(userUnitDir() + '/' + it.key(), it.value(), &error)) failures.append(error);
+            if (!restoreStartupFile(entries_, Kind::UserUnit, it.key(), it.value(), &error)) failures.append(error);
         }
-        if (!userUnitFiles.isEmpty() && !runProcess("/usr/bin/systemctl", {"--user", "daemon-reload"}, &error))
+        if (!userUnitFiles.isEmpty() && !runProcess(hostExecutable("systemctl"), {"--user", "daemon-reload"}, &error))
             failures.append("User systemd reload: " + error);
         refresh();
         for (const Entry &unit : units) {
@@ -729,6 +818,7 @@ private:
                 return e.kind == unit.kind && e.key == unit.key;
             });
             if (current == entries_.end()) { failures.append("Unit missing: " + unit.key); continue; }
+            if (managedEntry(*current)) { failures.append(unit.key + ": " + managedEntryMessage()); continue; }
             if (current->enabled != unit.enabled && !setUnitEnabled(unit, unit.enabled, &error))
                 failures.append(unit.key + ": " + error);
         }
@@ -751,6 +841,7 @@ private:
 
 } // namespace
 
+#ifndef VIGILANT_TESTING
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName("Vigilant");
@@ -762,3 +853,5 @@ int main(int argc, char *argv[]) {
     window.show();
     return app.exec();
 }
+
+#endif

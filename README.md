@@ -39,3 +39,61 @@ Every push to `master` prepares the next patch version, builds native x86_64 and
 Pull requests build development packages without publishing. Manual runs on `master` also release; matching version tags build and publish that version. Package and source artifacts are available from the **Arch Linux packages** workflow. Published releases are verified on retries and never replaced.
 
 Existing tests run during packaging where available, followed by packaged executable startup checks with an isolated D-Bus session. Both architectures verify package metadata and ELF architecture. CI does not establish real ARM desktop, Wayland, hardware GPU, or live network behavior.
+
+## Arch Linux and NixOS behavior
+
+Vigilant detects the host using `/etc/os-release` (`ID` and `ID_LIKE`), with the
+NixOS marker as a fallback. Installing Nix on Arch does not switch the host mode.
+It resolves system commands from the host's standard locations, including
+NixOS's system profile and privileged-wrapper directory. The Omarchy editor is
+used when available; otherwise the desktop's default file handler opens sources.
+
+On Arch, ordinary desktop and systemd enable/disable actions work as before.
+On NixOS, system service enablement is shown for inspection and must be changed
+through NixOS configuration. Manually maintained user services and desktop
+startup entries remain editable.
+
+Files that resolve into `/nix/store`, including Home Manager links and linked
+parent directories, are labeled **Nix managed** and cannot be changed or deleted
+through Vigilant. This protection applies on either host. Save backup omits
+managed entries, and Load backup rejects writes, removals, and state changes
+that would replace or shadow a currently managed entry, including older backups.
+Use NixOS or Home Manager configuration and rebuild to change those entries.
+Vigilant does not run rebuilds or modify your Nix configuration.
+
+## Nix package
+
+The flake supports `x86_64-linux` and `aarch64-linux`:
+
+```sh
+nix build .#vigilant
+nix run .#vigilant
+```
+
+Add `inputs.vigilant.url = "github:seth-reee/Vigilant";` to your NixOS flake,
+pass `inputs` through `specialArgs`, and include this in your module:
+
+```nix
+{ inputs, pkgs, ... }: {
+  environment.systemPackages = [
+    inputs.vigilant.packages.${pkgs.stdenv.hostPlatform.system}.vigilant
+  ];
+}
+```
+
+For Home Manager, use the same expression in `home.packages` with `inputs` in
+`extraSpecialArgs`. NixOS system entries are read-only in Vigilant, so this mode
+needs no extra privileged helper or custom authorization rules.
+
+CI builds both architectures and publishes Nix runtime closures alongside the
+Arch packages. Download the matching `.nar.xz`, `.store-path`, and
+`SHA256SUMS-nix-SYSTEM` files, then replace VERSION and SYSTEM below:
+
+```sh
+sha256sum -c SHA256SUMS-nix-SYSTEM
+xz -dc vigilant-VERSION-nix-SYSTEM.nar.xz | sudo nix-store --import
+nix profile install "$(cat vigilant-VERSION-nix-SYSTEM.store-path)"
+```
+
+Nix must already be installed. Omit `sudo` for single-user Nix installations.
+The declarative flake installation is preferred on NixOS.

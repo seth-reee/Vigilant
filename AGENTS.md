@@ -52,7 +52,7 @@ tag archive. Generate it from the final source with the following command
 (replace 0.2.1 for future versions), then pin its SHA256 in PKGBUILD:
 
 ```bash
-tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --transform='s,^,Vigilant-0.2.1/,' -cf - CMakeLists.txt LICENSE README.md main.cpp vigilant.desktop vigilant.png | gzip -n > /home/darrikm/Projects/release-artifacts/Vigilant/vigilant-0.2.1.tar.gz
+tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --transform='s,^,Vigilant-0.2.1/,' -cf - CMakeLists.txt LICENSE README.md main.cpp platform.h tests flake.nix flake.lock packaging/nix vigilant.desktop vigilant.png | gzip -n > /home/darrikm/Projects/release-artifacts/Vigilant/vigilant-0.2.1.tar.gz
 ```
 
 The archive deliberately contains application source only, avoiding a
@@ -65,3 +65,17 @@ When publishing is authorized, push master and the version tag, then upload
 both packages, the pinned source archive, PKGBUILD, and SHA256SUMS to GitHub
 Releases. Verify uploaded asset hashes. Do not replace an existing release
 or tag without an explicit reason and authorization.
+
+## Platform behavior and Nix packaging
+
+Include platform.h, tests/, flake.nix, flake.lock, and packaging/nix/ in release
+source archives; packaging/prepare-ci.sh maintains that list. CMake's default
+BUILD_TESTING runs platform_behavior through CTest; PKGBUILD must run check().
+Run `nix build .#vigilant` for a Nix package; the build runs the same tests.
+Both x86_64-linux and aarch64-linux definitions must evaluate.
+
+Do not enable/disable live units during automated verification. NixOS system
+unit enablement is declarative. Keep Nix-store-backed entries protected in both
+interactive actions and backup restoration, including symlinked parent paths.
+Arch installations with Nix/Home Manager must retain those file protections
+without switching their host behavior to NixOS.

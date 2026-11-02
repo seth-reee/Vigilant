@@ -29,7 +29,7 @@ archive="$pkgname-$pkgver.tar.gz"
 # Only application files: the pinned recipe cannot hash an archive containing itself.
 # Stable metadata makes both architectures and retries use identical source bytes.
 # Use tracked paths only, excluding local build output and sync-conflict files.
-git ls-files -z -- CMakeLists.txt LICENSE README.md main.cpp vigilant.desktop vigilant.png | \
+git ls-files -z -- CMakeLists.txt LICENSE README.md main.cpp platform.h tests vigilant.desktop vigilant.png flake.nix flake.lock packaging/nix | \
   tar --null --no-recursion --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
     --transform="s,^,Vigilant-$pkgver/," -cf - -T - | gzip -n > "$output_dir/$archive"
 checksum=$(sha256sum "$output_dir/$archive" | cut -d ' ' -f 1)
